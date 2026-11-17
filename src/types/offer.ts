@@ -36,6 +36,7 @@ export interface SingleOfferLine {
   brand: string;
   volume: string;
   image: string;
+  imageId?: string;
   category: string;
   subCategory: string;
   description: string;

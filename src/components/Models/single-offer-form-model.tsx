@@ -5,7 +5,6 @@ import Image from "next/image";
 import { Search, X } from "lucide-react";
 import type { Product } from "@/types/product";
 import type { SingleOfferFormResult, SingleOfferLine } from "@/types/offer";
-import { PRODUCTS } from "@/lib/data/products";
 import {
   Dialog,
   DialogContent,
@@ -169,12 +168,14 @@ function ProductRow({
 
 interface SingleOfferFormModelProps {
   open: boolean;
+  products?: Product[];
   onOpenChange: (open: boolean) => void;
-  onSave: (result: SingleOfferFormResult) => void;
+  onSave: (result: SingleOfferFormResult) => void | Promise<void>;
 }
 
 export function SingleOfferFormModel({
   open,
+  products = [],
   onOpenChange,
   onSave,
 }: SingleOfferFormModelProps) {
@@ -185,6 +186,8 @@ export function SingleOfferFormModel({
   const [priceInput, setPriceInput] = useState("");
   const [added, setAdded] = useState<SingleOfferLine | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     if (!open) return;
@@ -195,17 +198,22 @@ export function SingleOfferFormModel({
     setPriceInput("");
     setAdded(null);
     setConfirmOpen(false);
+    setSaving(false);
+    setError("");
   }, [open]);
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return [];
-    return PRODUCTS.filter((p) => {
-      if (p.status !== "active") return false;
-      const hay = `${p.brand} ${p.name} ${p.category} ${p.subCategory}`.toLowerCase();
-      return hay.includes(q);
-    }).slice(0, 5);
-  }, [query]);
+    return products
+      .filter((p) => {
+        if (p.status !== "active") return false;
+        const hay =
+          `${p.brand} ${p.name} ${p.category} ${p.subCategory}`.toLowerCase();
+        return hay.includes(q);
+      })
+      .slice(0, 5);
+  }, [query, products]);
 
   function handleSelectProduct(product: Product) {
     setSelected(product);
@@ -224,6 +232,7 @@ export function SingleOfferFormModel({
       brand: selected.brand,
       volume: selected.volume,
       image: selected.image,
+      imageId: selected.imageId || undefined,
       category: selected.category,
       subCategory: selected.subCategory,
       description: selected.description,
@@ -242,16 +251,24 @@ export function SingleOfferFormModel({
     setConfirmOpen(true);
   }
 
-  function handleConfirmSave() {
+  async function handleConfirmSave() {
     if (!added) return;
     const dateCheck = validateOfferDateRange(start, end);
     if (!dateCheck.ok) return;
-    onSave({
-      validityFrom: formatDateParts(start),
-      validityTo: formatDateParts(end),
-      line: added,
-    });
-    onOpenChange(false);
+    setSaving(true);
+    setError("");
+    try {
+      await onSave({
+        validityFrom: formatDateParts(start),
+        validityTo: formatDateParts(end),
+        line: added,
+      });
+      onOpenChange(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save offer.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   const canAdd =
@@ -406,9 +423,16 @@ export function SingleOfferFormModel({
 
       <ConfirmDialog
         open={confirmOpen}
-        onOpenChange={setConfirmOpen}
+        onOpenChange={(open) => {
+          if (!saving) setConfirmOpen(open);
+        }}
         title="Confirm Save Action"
-        message={`Please confirm if you want to save the Offer record of ${confirmName}.`}
+        message={
+          error
+            ? error
+            : `Please confirm if you want to save the Offer record of ${confirmName}.`
+        }
+        confirmLabel={saving ? "Saving..." : "Yes"}
         onConfirm={handleConfirmSave}
       />
     </>

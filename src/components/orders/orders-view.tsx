@@ -12,7 +12,6 @@ import {
   User,
 } from "lucide-react";
 import type { OrderItem, OrderPeriod } from "@/types/order";
-import { ORDERS_BY_PERIOD } from "@/lib/data/orders";
 import { statusFromStep } from "@/lib/order-process";
 import { OrderStats } from "@/components/orders/order-stats";
 import { OrdersTable } from "@/components/orders/orders-table";
@@ -28,6 +27,18 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "cn";
+import {
+  deleteOrderApi,
+  fetchOrders,
+  updateOrderStatusApi,
+} from "@/lib/api/orders";
+import {
+  fetchDashboardCards,
+  type DashboardCard,
+} from "@/lib/api/dashboard";
+import { ApiError } from "@/lib/api/client";
+import { API_BASE_URL } from "@/lib/api/config";
+import { getAccessToken } from "@/lib/api/storage";
 
 const PAGE_SIZE = 10;
 
@@ -37,26 +48,12 @@ const PERIOD_TABS: { key: OrderPeriod; label: string }[] = [
   { key: "monthly", label: "Monthly" },
 ];
 
-function clonePeriodOrders(): Record<OrderPeriod, OrderItem[]> {
-  return {
-    now: ORDERS_BY_PERIOD.now.orders.map((o) => ({
-      ...o,
-      items: o.items.map((i) => ({ ...i })),
-    })),
-    weekly: ORDERS_BY_PERIOD.weekly.orders.map((o) => ({
-      ...o,
-      items: o.items.map((i) => ({ ...i })),
-    })),
-    monthly: ORDERS_BY_PERIOD.monthly.orders.map((o) => ({
-      ...o,
-      items: o.items.map((i) => ({ ...i })),
-    })),
-  };
-}
-
 export function OrdersView() {
   const [period, setPeriod] = useState<OrderPeriod>("now");
-  const [ordersByPeriod, setOrdersByPeriod] = useState(clonePeriodOrders);
+  const [orders, setOrders] = useState<OrderItem[]>([]);
+  const [stats, setStats] = useState<DashboardCard[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [headerSearch, setHeaderSearch] = useState("");
   const [tableSearch, setTableSearch] = useState("");
   const [status, setStatus] = useState("");
@@ -67,10 +64,34 @@ export function OrdersView() {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<OrderItem | null>(null);
 
-  const orders = ordersByPeriod[period];
-  const stats = ORDERS_BY_PERIOD[period].stats;
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setLoading(true);
+      try {
+        const [list, cards] = await Promise.all([
+          fetchOrders(),
+          fetchDashboardCards(),
+        ]);
+        if (alive) {
+          setOrders(list);
+          setStats(cards);
+        }
+      } catch (err) {
+        if (alive) {
+          setError(
+            err instanceof ApiError ? err.message : "Failed to load orders"
+          );
+        }
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
 
-  // Keep selected order in sync when list updates
   useEffect(() => {
     if (!selected) return;
     const updated = orders.find((o) => o.id === selected.id) ?? null;
@@ -100,36 +121,57 @@ export function OrdersView() {
   function changePeriod(next: OrderPeriod) {
     setPeriod(next);
     setPage(1);
-    setDetailsOpen(false);
   }
 
-  function updateOrder(
-    orderId: string,
-    updater: (order: OrderItem) => OrderItem
-  ) {
-    setOrdersByPeriod((prev) => ({
-      ...prev,
-      [period]: prev[period].map((o) => (o.id === orderId ? updater(o) : o)),
-    }));
+  async function handleStepChange(orderId: string, step: number) {
+    const order = orders.find((o) => o.id === orderId);
+    if (!order) return;
+    const nextStatus = statusFromStep(order.orderType, step);
+    try {
+      const updated = await updateOrderStatusApi(orderId, nextStatus);
+      const withStep = { ...updated, currentStep: step, status: nextStatus };
+      setOrders((prev) => prev.map((o) => (o.id === orderId ? withStep : o)));
+    } catch (err) {
+      setError(
+        err instanceof ApiError ? err.message : "Failed to update order"
+      );
+    }
   }
 
-  function handleStepChange(orderId: string, stepIndex: number) {
-    updateOrder(orderId, (o) => ({
-      ...o,
-      currentStep: stepIndex,
-      status: statusFromStep(o.orderType, stepIndex),
-    }));
-  }
-
-  function handleDeleteConfirm() {
+  async function handleDeleteConfirm() {
     if (!deleteTarget) return;
-    setOrdersByPeriod((prev) => ({
-      ...prev,
-      [period]: prev[period].filter((o) => o.id !== deleteTarget.id),
-    }));
-    setDetailsOpen(false);
-    setSelected(null);
-    setDeleteTarget(null);
+    try {
+      await deleteOrderApi(deleteTarget.id);
+      setOrders((prev) => prev.filter((o) => o.id !== deleteTarget.id));
+      if (selected?.id === deleteTarget.id) {
+        setDetailsOpen(false);
+        setSelected(null);
+      }
+      setDeleteTarget(null);
+    } catch (err) {
+      setError(
+        err instanceof ApiError ? err.message : "Failed to delete order"
+      );
+    }
+  }
+
+  async function handleExport() {
+    try {
+      const token = getAccessToken();
+      const res = await fetch(`${API_BASE_URL}/api/admin/orders/export`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+      if (!res.ok) throw new Error("Export failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "orders.xlsx";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Export failed");
+    }
   }
 
   const displayDate = date
@@ -247,6 +289,7 @@ export function OrdersView() {
             <Button
               type="button"
               className="h-9 rounded-full bg-spar-green px-4 text-white hover:bg-spar-green-dark"
+              onClick={handleExport}
             >
               <Download className="size-4" />
               Download CSV
@@ -256,16 +299,21 @@ export function OrdersView() {
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
+        {error && <p className="text-sm text-spar-red">{error}</p>}
         <OrderStats key={period} stats={stats} />
 
         <div className="rounded-[28px] bg-[#eceef2] p-4">
-          <OrdersTable
-            orders={pageItems}
-            onView={(order) => {
-              setSelected(order);
-              setDetailsOpen(true);
-            }}
-          />
+          {loading ? (
+            <p className="text-sm text-muted-foreground">Loading orders...</p>
+          ) : (
+            <OrdersTable
+              orders={pageItems}
+              onView={(order) => {
+                setSelected(order);
+                setDetailsOpen(true);
+              }}
+            />
+          )}
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-full bg-white px-4 py-2.5">
             <p className="text-sm text-muted-foreground">

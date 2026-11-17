@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Bell,
   ChevronLeft,
@@ -15,11 +15,7 @@ import type {
   SingleOfferFormResult,
   ComboOfferFormResult,
 } from "@/types/offer";
-import {
-  COMBO_OFFERS,
-  OFFER_CATEGORIES,
-  SINGLE_OFFERS,
-} from "@/lib/data/offers";
+import { OFFER_CATEGORIES } from "@/lib/data/offers";
 import { OfferCard } from "@/components/offers/offer-card";
 import { SingleOfferFormModel } from "@/components/Models/single-offer-form-model";
 import { ComboOfferFormModel } from "@/components/Models/combo-offer-form-model";
@@ -35,6 +31,16 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "cn";
+import {
+  createComboOfferApi,
+  createSingleOfferApi,
+  deleteOfferApi,
+  fetchOffers,
+  updateOfferStatusApi,
+} from "@/lib/api/offers";
+import { fetchProducts } from "@/lib/api/products";
+import type { Product } from "@/types/product";
+import { ApiError } from "@/lib/api/client";
 
 const PAGE_SIZE = 10;
 
@@ -43,14 +49,39 @@ export function OffersView() {
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("");
   const [page, setPage] = useState(1);
-  const [singleOffers, setSingleOffers] = useState(SINGLE_OFFERS);
-  const [comboOffers, setComboOffers] = useState(COMBO_OFFERS);
+  const [singleOffers, setSingleOffers] = useState<OfferItem[]>([]);
+  const [comboOffers, setComboOffers] = useState<OfferItem[]>([]);
+  const [catalogProducts, setCatalogProducts] = useState<Product[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<OfferItem | null>(null);
 
   const [formOpen, setFormOpen] = useState(false);
   const [comboFormOpen, setComboFormOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [selectedOffer, setSelectedOffer] = useState<OfferItem | null>(null);
+
+  async function loadOffers() {
+    setLoading(true);
+    setError("");
+    try {
+      const [list, products] = await Promise.all([
+        fetchOffers(),
+        fetchProducts(),
+      ]);
+      setSingleOffers(list.filter((o) => o.kind === "single"));
+      setComboOffers(list.filter((o) => o.kind === "combo"));
+      setCatalogProducts(products);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to load offers");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadOffers();
+  }, []);
 
   const source = tab === "single" ? singleOffers : comboOffers;
 
@@ -94,72 +125,58 @@ export function OffersView() {
     setComboFormOpen(true);
   }
 
-  function handleSaveSingleOffer(result: SingleOfferFormResult) {
-    const { line, validityFrom, validityTo } = result;
-    const newOffer: OfferItem = {
-      id: `single-${Date.now()}`,
-      kind: "single",
-      title: line.title,
-      brand: line.brand.toUpperCase(),
-      volume: line.volume,
-      image: line.image,
-      price: line.price,
-      compareAtPrice: line.compareAtPrice,
-      validityFrom,
-      validityTo,
-      status: "active",
-      category: line.category,
-      subCategory: line.subCategory,
-      description: line.description,
-    };
-    setSingleOffers((prev) => [newOffer, ...prev]);
+  async function handleSaveSingleOffer(result: SingleOfferFormResult) {
+    const created = await createSingleOfferApi(
+      result,
+      result.line.imageId || undefined
+    );
+    setSingleOffers((prev) => [created, ...prev]);
     setPage(1);
   }
 
-  function handleSaveComboOffer(result: ComboOfferFormResult) {
-    const newOffer: OfferItem = {
-      id: `combo-${Date.now()}`,
-      kind: "combo",
-      title: result.title,
-      description: result.description,
-      image: result.image,
-      price: result.price,
-      compareAtPrice: result.products.reduce((s, p) => s + p.price, 0),
-      validityFrom: result.validityFrom,
-      validityTo: result.validityTo,
-      status: "active",
-      category: result.category,
-      products: result.products,
-    };
-    setComboOffers((prev) => [newOffer, ...prev]);
+  async function handleSaveComboOffer(result: ComboOfferFormResult) {
+    const created = await createComboOfferApi(result);
+    setComboOffers((prev) => [created, ...prev]);
     setPage(1);
   }
 
-  function handleStatusChange(offerId: string, active: boolean) {
+  async function handleStatusChange(offerId: string, active: boolean) {
     const status = active ? "active" : "inactive";
-    setSingleOffers((prev) =>
-      prev.map((o) => (o.id === offerId ? { ...o, status } : o))
-    );
-    setComboOffers((prev) =>
-      prev.map((o) => (o.id === offerId ? { ...o, status } : o))
-    );
-    setSelectedOffer((prev) =>
-      prev && prev.id === offerId ? { ...prev, status } : prev
-    );
+    try {
+      await updateOfferStatusApi(offerId, active);
+      setSingleOffers((prev) =>
+        prev.map((o) => (o.id === offerId ? { ...o, status } : o))
+      );
+      setComboOffers((prev) =>
+        prev.map((o) => (o.id === offerId ? { ...o, status } : o))
+      );
+      setSelectedOffer((prev) =>
+        prev && prev.id === offerId ? { ...prev, status } : prev
+      );
+    } catch (err) {
+      setError(
+        err instanceof ApiError ? err.message : "Failed to update offer status"
+      );
+    }
   }
 
-  function handleDeleteConfirm() {
+  async function handleDeleteConfirm() {
     if (!deleteTarget) return;
-    if (deleteTarget.kind === "single") {
-      setSingleOffers((prev) => prev.filter((o) => o.id !== deleteTarget.id));
-    } else {
-      setComboOffers((prev) => prev.filter((o) => o.id !== deleteTarget.id));
+    try {
+      await deleteOfferApi(deleteTarget.id);
+      if (deleteTarget.kind === "single") {
+        setSingleOffers((prev) => prev.filter((o) => o.id !== deleteTarget.id));
+      } else {
+        setComboOffers((prev) => prev.filter((o) => o.id !== deleteTarget.id));
+      }
+      if (selectedOffer?.id === deleteTarget.id) {
+        setDetailsOpen(false);
+        setSelectedOffer(null);
+      }
+      setDeleteTarget(null);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to delete offer");
     }
-    if (selectedOffer?.id === deleteTarget.id) {
-      setDetailsOpen(false);
-      setSelectedOffer(null);
-    }
-    setDeleteTarget(null);
   }
 
   return (
@@ -264,6 +281,10 @@ export function OffersView() {
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
+        {error && <p className="mb-2 text-sm text-spar-red">{error}</p>}
+        {loading && (
+          <p className="mb-2 text-sm text-muted-foreground">Loading offers...</p>
+        )}
         <div
           className={cn(
             "grid gap-3",
@@ -345,12 +366,14 @@ export function OffersView() {
 
       <SingleOfferFormModel
         open={formOpen}
+        products={catalogProducts}
         onOpenChange={setFormOpen}
         onSave={handleSaveSingleOffer}
       />
 
       <ComboOfferFormModel
         open={comboFormOpen}
+        catalogProducts={catalogProducts}
         onOpenChange={setComboFormOpen}
         onSave={handleSaveComboOffer}
       />

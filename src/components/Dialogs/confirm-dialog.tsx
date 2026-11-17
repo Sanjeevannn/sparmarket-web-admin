@@ -16,7 +16,7 @@ interface ConfirmDialogProps {
   message?: string;
   confirmLabel?: string;
   cancelLabel?: string;
-  onConfirm: () => void;
+  onConfirm: () => void | Promise<void>;
 }
 
 export function ConfirmDialog({
@@ -55,8 +55,8 @@ export function ConfirmDialog({
           <Button
             type="button"
             className="h-11 rounded-xl bg-spar-green text-white hover:bg-spar-green-dark"
-            onClick={() => {
-              onConfirm();
+            onClick={async () => {
+              await onConfirm();
               onOpenChange(false);
             }}
           >

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Bell,
   Calendar,
@@ -9,10 +9,10 @@ import {
   Search,
   User,
 } from "lucide-react";
-import type { SalesPeriod } from "@/types/sales";
+import type { SaleItem, SalesPeriod, SalesStat } from "@/types/sales";
 import {
-  SALES_BY_PERIOD,
   SALES_BRANDS,
+  SALES_BY_PERIOD,
   SALES_CATEGORIES,
   SALES_SUB_CATEGORIES,
 } from "@/lib/data/sales";
@@ -28,6 +28,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "cn";
+import {
+  fetchSales,
+  fetchSalesSummary,
+  mapSaleRow,
+  mapUiPeriodToApi,
+} from "@/lib/api/sales";
+import { formatEuroValue } from "@/lib/api/mappers";
+import { ApiError } from "@/lib/api/client";
 
 const PAGE_SIZE = 10;
 
@@ -39,6 +47,10 @@ const PERIOD_TABS: { key: SalesPeriod; label: string }[] = [
 
 export function SalesView() {
   const [period, setPeriod] = useState<SalesPeriod>("now");
+  const [items, setItems] = useState<SaleItem[]>([]);
+  const [stats, setStats] = useState<SalesStat[]>(SALES_BY_PERIOD.now.stats);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [brand, setBrand] = useState("");
   const [category, setCategory] = useState("");
@@ -46,11 +58,78 @@ export function SalesView() {
   const [date, setDate] = useState("2025-04-12");
   const [page, setPage] = useState(1);
 
-  const periodData = SALES_BY_PERIOD[period];
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setLoading(true);
+      setError("");
+      try {
+        const apiPeriod = mapUiPeriodToApi(period);
+        const [sales, summary] = await Promise.all([
+          fetchSales(apiPeriod),
+          fetchSalesSummary(apiPeriod),
+        ]);
+        if (!alive) return;
+        setItems(sales.map((row) => mapSaleRow(row)));
+        const summaryRow = summary as {
+          totalRevenue?: number;
+          revenue?: number;
+          total?: number;
+          totalSales?: number;
+        };
+        const revenue = Number(
+          summaryRow.totalRevenue ?? summaryRow.revenue ?? summaryRow.total ?? 0
+        );
+        const count = Number(summaryRow.totalSales ?? sales.length ?? 0);
+        setStats([
+          {
+            id: "sold",
+            label: "Product Sold",
+            value: String(count),
+            icon: "bags",
+          },
+          {
+            id: "revenue",
+            label: "Revenue",
+            value: formatEuroValue(revenue),
+            icon: "card",
+          },
+          {
+            id: "weekly",
+            label: "Period Sales",
+            value: String(count),
+            icon: "chart",
+          },
+          {
+            id: "avg",
+            label: "Avg Order",
+            value: formatEuroValue(count ? revenue / count : 0),
+            icon: "wallet",
+          },
+          {
+            id: "total",
+            label: "Total Revenue",
+            value: formatEuroValue(revenue),
+            icon: "coins",
+          },
+        ]);
+      } catch (err) {
+        if (alive) {
+          setError(err instanceof ApiError ? err.message : "Failed to load sales");
+          setItems([]);
+        }
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [period]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return periodData.items.filter((item) => {
+    return items.filter((item) => {
       if (q) {
         const hay =
           `${item.itemName} ${item.brand} ${item.category} ${item.subCategory}`.toLowerCase();
@@ -75,7 +154,7 @@ export function SalesView() {
       }
       return true;
     });
-  }, [periodData.items, search, brand, category, subCategory]);
+  }, [items, search, brand, category, subCategory]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
@@ -99,7 +178,6 @@ export function SalesView() {
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
       <div className="flex shrink-0 flex-col gap-3">
-        {/* Top bar */}
         <div className="flex items-center justify-between gap-4 rounded-full bg-[#eceef2] px-5 py-2.5">
           <h1 className="min-w-0 shrink text-lg font-semibold tracking-tight text-foreground">
             Sales management
@@ -137,7 +215,6 @@ export function SalesView() {
           </div>
         </div>
 
-        {/* Period tabs + filters */}
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-full bg-[#eceef2] px-4 py-2.5">
           <div className="flex flex-wrap items-center gap-2">
             {PERIOD_TABS.map((tab) => (
@@ -233,10 +310,15 @@ export function SalesView() {
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
-        <SalesStats key={period} stats={periodData.stats} />
+        {error && <p className="text-sm text-spar-red">{error}</p>}
+        <SalesStats key={period} stats={stats} />
 
         <div className="rounded-[28px] bg-[#eceef2] p-4">
-          <SalesTable items={pageItems} />
+          {loading ? (
+            <p className="text-sm text-muted-foreground">Loading sales...</p>
+          ) : (
+            <SalesTable items={pageItems} />
+          )}
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-full bg-white px-4 py-2.5">
             <p className="text-sm text-muted-foreground">

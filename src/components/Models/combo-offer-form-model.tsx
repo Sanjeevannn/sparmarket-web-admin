@@ -8,7 +8,6 @@ import type {
   ComboOfferFormResult,
   ComboOfferProduct,
 } from "@/types/offer";
-import { PRODUCTS } from "@/lib/data/products";
 import {
   Dialog,
   DialogContent,
@@ -95,12 +94,14 @@ function DatePartsRow({
 
 interface ComboOfferFormModelProps {
   open: boolean;
+  catalogProducts?: Product[];
   onOpenChange: (open: boolean) => void;
-  onSave: (result: ComboOfferFormResult) => void;
+  onSave: (result: ComboOfferFormResult) => void | Promise<void>;
 }
 
 export function ComboOfferFormModel({
   open,
+  catalogProducts = [],
   onOpenChange,
   onSave,
 }: ComboOfferFormModelProps) {
@@ -139,12 +140,14 @@ export function ComboOfferFormModel({
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q || selected) return [];
-    return PRODUCTS.filter((p) => {
-      if (p.status !== "active") return false;
-      const hay = `${p.brand} ${p.name} ${p.category}`.toLowerCase();
-      return hay.includes(q);
-    }).slice(0, 5);
-  }, [query, selected]);
+    return catalogProducts
+      .filter((p) => {
+        if (p.status !== "active") return false;
+        const hay = `${p.brand} ${p.name} ${p.category}`.toLowerCase();
+        return hay.includes(q);
+      })
+      .slice(0, 5);
+  }, [query, selected, catalogProducts]);
 
   function handleFile(file?: File | null) {
     if (!file) return;
@@ -204,11 +207,11 @@ export function ComboOfferFormModel({
 
   const canSave = products.length > 0 && dateValidation.ok;
 
-  function handleConfirmSave() {
+  async function handleConfirmSave() {
     const dateCheck = validateOfferDateRange(start, end);
     if (!dateCheck.ok) return;
     const total = products.reduce((sum, p) => sum + p.offerPrice, 0);
-    onSave({
+    await onSave({
       title: title.trim(),
       description: description.trim(),
       image,

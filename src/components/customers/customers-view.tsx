@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Bell,
   ChevronLeft,
@@ -9,11 +9,7 @@ import {
   User,
   Filter,
 } from "lucide-react";
-import {
-  CUSTOMERS,
-  CLOSURE_REASONS,
-} from "@/lib/data/customers";
-import type { Customer } from "@/types/customer";
+import type { Customer, ClosureReason } from "@/types/customer";
 import { CustomerStats } from "@/components/customers/customer-stats";
 import { CustomerDirectory } from "@/components/customers/customer-directory";
 import { ClosureAnalysis } from "@/components/customers/closure-analysis";
@@ -28,6 +24,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "cn";
+import {
+  fetchClosureReasons,
+  fetchCustomers,
+} from "@/lib/api/customers";
+import { ApiError } from "@/lib/api/client";
 
 const PAGE_SIZE = 10;
 
@@ -35,6 +36,10 @@ type TabKey = "directory" | "closure";
 
 export function CustomersView() {
   const [tab, setTab] = useState<TabKey>("directory");
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [closureReasons, setClosureReasons] = useState<ClosureReason[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [headerSearch, setHeaderSearch] = useState("");
   const [filterSearch, setFilterSearch] = useState("");
   const [status, setStatus] = useState("");
@@ -42,9 +47,42 @@ export function CustomersView() {
   const [selected, setSelected] = useState<Customer | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
 
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const [list, reasons] = await Promise.all([
+          fetchCustomers(),
+          fetchClosureReasons(),
+        ]);
+        if (!alive) return;
+        setCustomers(list);
+        setClosureReasons(
+          reasons.map((r, i) => ({
+            id: `reason-${i + 1}`,
+            reason: r.reason || "Other",
+            count: Number(r.count || 0),
+            isOther: !r.reason,
+          }))
+        );
+      } catch (err) {
+        if (alive) {
+          setError(
+            err instanceof ApiError ? err.message : "Failed to load customers"
+          );
+        }
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   const filtered = useMemo(() => {
     const q = `${headerSearch} ${filterSearch}`.trim().toLowerCase();
-    return CUSTOMERS.filter((c) => {
+    return customers.filter((c) => {
       if (q) {
         const hay = `${c.name} ${c.email} ${c.phone}`.toLowerCase();
         if (!hay.includes(q)) return false;
@@ -54,7 +92,7 @@ export function CustomersView() {
       }
       return true;
     });
-  }, [headerSearch, filterSearch, status]);
+  }, [customers, headerSearch, filterSearch, status]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
@@ -236,8 +274,10 @@ export function CustomersView() {
                 </div>
               </div>
             </>
+          ) : loading ? (
+            <p className="text-sm text-muted-foreground">Loading...</p>
           ) : (
-            <ClosureAnalysis reasons={CLOSURE_REASONS} />
+            <ClosureAnalysis reasons={closureReasons} />
           )}
         </div>
       </div>

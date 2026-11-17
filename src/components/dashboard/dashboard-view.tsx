@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect, useState } from "react";
+import Link from "next/link";
 import {
   Bell,
   User,
@@ -14,7 +16,11 @@ import {
   Wallet,
   Coins,
 } from "lucide-react";
-import { DASHBOARD_STATS } from "@/lib/data/dashboard";
+import { useAuth } from "@/components/auth/auth-provider";
+import {
+  fetchDashboardCards,
+  type DashboardCard,
+} from "@/lib/api/dashboard";
 
 const ICONS = {
   cart: ShoppingCart,
@@ -43,6 +49,32 @@ const ICON_COLORS = {
 } as const;
 
 export function DashboardView() {
+  const { user } = useAuth();
+  const [stats, setStats] = useState<DashboardCard[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const cards = await fetchDashboardCards();
+        if (alive) setStats(cards);
+      } catch (err) {
+        if (alive) {
+          setError(
+            err instanceof Error ? err.message : "Failed to load dashboard"
+          );
+        }
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   return (
     <div className="flex h-full min-h-0 flex-col gap-4">
       <div className="flex shrink-0 items-center justify-between gap-4 rounded-full bg-[#eceef2] px-5 py-2.5">
@@ -63,38 +95,63 @@ export function DashboardView() {
             <span className="flex size-8 items-center justify-center rounded-full bg-white text-muted-foreground">
               <User className="size-4" strokeWidth={1.75} />
             </span>
-            Admin
+            {user?.fullName || "Admin"}
           </div>
         </div>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
-          {DASHBOARD_STATS.map((item) => {
-            const Icon = ICONS[item.icon];
-            return (
-              <div
-                key={item.id}
-                className="rounded-2xl bg-[#eceef2] px-5 py-5"
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "flex-start",
-                  gap: "10px",
-                }}
-              >
-                <Icon
-                  className={`size-8 ${ICON_COLORS[item.icon]}`}
-                  strokeWidth={2}
-                />
-                <p className="text-2xl font-bold leading-none text-foreground">
-                  {item.value}
-                </p>
-                <p className="text-sm text-muted-foreground">{item.label}</p>
-              </div>
-            );
-          })}
-        </div>
+        {error && (
+          <p className="mb-3 text-sm text-spar-red">{error}</p>
+        )}
+        {loading ? (
+          <p className="text-sm text-muted-foreground">Loading dashboard...</p>
+        ) : (
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+            {stats.map((item) => {
+              const Icon = ICONS[item.icon];
+              const content = (
+                <>
+                  <Icon
+                    className={`size-8 ${ICON_COLORS[item.icon]}`}
+                    strokeWidth={2}
+                  />
+                  <p className="text-2xl font-bold leading-none text-foreground">
+                    {item.value}
+                  </p>
+                  <p className="text-sm text-muted-foreground">{item.label}</p>
+                </>
+              );
+              const className =
+                "rounded-2xl bg-[#eceef2] px-5 py-5 transition-colors hover:bg-[#e4e7ec]";
+              const style = {
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "flex-start",
+                gap: "10px",
+              } as const;
+
+              if (item.href) {
+                return (
+                  <Link
+                    key={item.id}
+                    href={item.href}
+                    className={className}
+                    style={style}
+                  >
+                    {content}
+                  </Link>
+                );
+              }
+
+              return (
+                <div key={item.id} className={className} style={style}>
+                  {content}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );

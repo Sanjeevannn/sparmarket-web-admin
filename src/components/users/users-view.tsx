@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Bell,
   ChevronLeft,
@@ -9,7 +9,6 @@ import {
   Search,
   User,
 } from "lucide-react";
-import { USERS } from "@/lib/data/users";
 import type { AppUser, UserFormValues, UserStatus } from "@/types/user";
 import { UserStats } from "@/components/users/user-stats";
 import { UsersTable } from "@/components/users/users-table";
@@ -25,19 +24,21 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "cn";
+import {
+  createUserApi,
+  deleteUserApi,
+  fetchUsers,
+  updateUserApi,
+  updateUserStatusApi,
+} from "@/lib/api/users";
+import { ApiError } from "@/lib/api/client";
 
 const PAGE_SIZE = 10;
 
-function formatToday() {
-  const d = new Date();
-  const dd = String(d.getDate()).padStart(2, "0");
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const yyyy = d.getFullYear();
-  return `${dd}/${mm}/${yyyy}`;
-}
-
 export function UsersView() {
-  const [users, setUsers] = useState<AppUser[]>(USERS);
+  const [users, setUsers] = useState<AppUser[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
   const [page, setPage] = useState(1);
@@ -46,6 +47,25 @@ export function UsersView() {
   const [formMode, setFormMode] = useState<"add" | "edit">("add");
   const [editingUser, setEditingUser] = useState<AppUser | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AppUser | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const list = await fetchUsers();
+        if (alive) setUsers(list);
+      } catch (err) {
+        if (alive) {
+          setError(err instanceof ApiError ? err.message : "Failed to load users");
+        }
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -78,43 +98,46 @@ export function UsersView() {
     setFormOpen(true);
   }
 
-  function handleSave(values: UserFormValues, userId?: string) {
-    if (userId) {
-      setUsers((prev) =>
-        prev.map((u) =>
-          u.id === userId
-            ? {
-                ...u,
-                manager: values.manager.trim(),
-                username: values.username.trim(),
-              }
-            : u
-        )
-      );
-    } else {
-      const created: AppUser = {
-        id: `user-${Date.now()}`,
-        username: values.username.trim(),
-        manager: values.manager.trim(),
-        createdAt: formatToday(),
-        status: "active",
-        role: "admin",
-      };
-      setUsers((prev) => [created, ...prev]);
-      setPage(1);
+  async function handleSave(values: UserFormValues, userId?: string) {
+    try {
+      if (userId) {
+        const updated = await updateUserApi(userId, values);
+        setUsers((prev) =>
+          prev.map((u) => (u.id === userId ? updated : u))
+        );
+      } else {
+        const created = await createUserApi(values);
+        setUsers((prev) => [created, ...prev]);
+        setPage(1);
+      }
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to save user");
+      throw err;
     }
   }
 
-  function handleDeleteConfirm() {
+  async function handleDeleteConfirm() {
     if (!deleteTarget) return;
-    setUsers((prev) => prev.filter((u) => u.id !== deleteTarget.id));
-    setDeleteTarget(null);
+    try {
+      await deleteUserApi(deleteTarget.id);
+      setUsers((prev) => prev.filter((u) => u.id !== deleteTarget.id));
+      setDeleteTarget(null);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to delete user");
+    }
   }
 
-  function handleStatusChange(userId: string, next: UserStatus) {
-    setUsers((prev) =>
-      prev.map((u) => (u.id === userId ? { ...u, status: next } : u))
-    );
+  async function handleStatusChange(userId: string, next: UserStatus) {
+    try {
+      const updated = await updateUserStatusApi(userId, next);
+      setUsers((prev) =>
+        prev.map((u) => (u.id === userId ? updated : u))
+      );
+    } catch (err) {
+      setError(
+        err instanceof ApiError ? err.message : "Failed to update status"
+      );
+    }
   }
 
   return (

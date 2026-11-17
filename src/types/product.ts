@@ -14,6 +14,9 @@ export interface Product {
   subCategory: string;
   description: string;
   status: ProductStatus;
+  categoryId?: string;
+  subCategoryId?: string;
+  imageId?: string | null;
 }
 
 export interface ProductFormValues {

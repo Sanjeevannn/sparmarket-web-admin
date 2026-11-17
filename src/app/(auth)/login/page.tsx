@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { SparLogo } from "@/components/layout/spar-logo";
+import { useAuth } from "@/components/auth/auth-provider";
+import { ApiError } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,17 +18,28 @@ import {
 
 export default function LoginPage() {
   const router = useRouter();
+  const { login } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
-    // Auth wiring later — navigate into admin for now
-    setTimeout(() => {
-      router.push("/dashboard");
-    }, 400);
+    setError("");
+    try {
+      await login(email.trim(), password);
+      router.replace("/dashboard");
+    } catch (err) {
+      const message =
+        err instanceof ApiError
+          ? err.message
+          : "Unable to sign in. Check API connection.";
+      setError(message);
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -54,7 +67,7 @@ export default function LoginPage() {
               <Input
                 id="email"
                 type="email"
-                placeholder="admin@spar.lk"
+                placeholder="superadmin@supermarket.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className="h-10"
@@ -73,6 +86,11 @@ export default function LoginPage() {
                 required
               />
             </div>
+            {error && (
+              <p className="text-sm text-spar-red" role="alert">
+                {error}
+              </p>
+            )}
             <Button
               type="submit"
               className="mt-2 h-10 w-full rounded-full bg-spar-green text-white hover:bg-spar-green-dark"

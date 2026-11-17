@@ -26,7 +26,7 @@ interface UserFormModelProps {
   mode: "add" | "edit";
   user?: AppUser | null;
   onOpenChange: (open: boolean) => void;
-  onSave: (values: UserFormValues, userId?: string) => void;
+  onSave: (values: UserFormValues, userId?: string) => void | Promise<void>;
 }
 
 export function UserFormModel({
@@ -173,8 +173,8 @@ export function UserFormModel({
         onOpenChange={setConfirmOpen}
         title="Confirm Save Action"
         message="Please confirm if you want to save the User ."
-        onConfirm={() => {
-          onSave(form, mode === "edit" ? user?.id : undefined);
+        onConfirm={async () => {
+          await onSave(form, mode === "edit" ? user?.id : undefined);
           onOpenChange(false);
         }}
       />
